@@ -4,10 +4,18 @@ import requests
 from io import BytesIO
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for the entire application
+CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for all routes
 
-@app.route('/download', methods=['POST'])
+@app.route('/download', methods=['POST', 'OPTIONS'])
 def download_video():
+    if request.method == 'OPTIONS':
+        # Handle the preflight request
+        response = jsonify({'status': 'CORS preflight'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+        response.headers.add("Access-Control-Allow-Methods", "POST,OPTIONS")
+        return response
+
     data = request.get_json()
     url = data.get('url')
 
