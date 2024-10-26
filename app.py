@@ -1,8 +1,10 @@
 from flask import Flask, request, send_file, jsonify
+from flask_cors import CORS  # Import CORS
 import requests
 from io import BytesIO
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for the entire application
 
 @app.route('/download', methods=['POST'])
 def download_video():
