@@ -5,9 +5,23 @@ import os
 import tempfile
 from pytube import YouTube
 import re
+import requests
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
+
+def create_instagram_session():
+    L = instaloader.Instaloader()
+    # Add these basic headers to mimic a browser request
+    L.context._session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+    })
+    return L
 
 @app.route('/download', methods=['POST', 'OPTIONS'])
 def download_video():
@@ -57,34 +71,62 @@ def download_from_youtube(url):
 
 def download_from_instagram(url):
     try:
-        L = instaloader.Instaloader()
-        
-        # Handle both regular posts and reels
-        if '/reel/' in url:
-            # Extract the shortcode from reel URL
-            shortcode = re.search(r'/reel/([^/?]+)', url).group(1)
-        else:
-            # Extract shortcode from regular post URL
-            shortcode = re.search(r'/p/([^/?]+)', url).group(1)
-        
         temp_dir = tempfile.mkdtemp()
         
-        # Download the post or reel
-        post = instaloader.Post.from_shortcode(L.context, shortcode)
-        
-        if hasattr(post, 'video_url'):
-            # For video posts and reels
-            import requests
-            video_response = requests.get(post.video_url)
-            video_path = os.path.join(temp_dir, f"{shortcode}.mp4")
+        # Create a session with proper headers
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+        })
+
+        # For reels
+        if '/reel/' in url:
+            # Extract the shortcode
+            shortcode = re.search(r'/reel/([^/?]+)', url).group(1)
+            api_url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables={{\"shortcode\":\"{shortcode}\"}}"
             
-            with open(video_path, 'wb') as f:
-                f.write(video_response.content)
+            response = session.get(api_url)
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch reel data: HTTP {response.status_code}")
             
-            return video_path
+            data = response.json()
+            try:
+                video_url = data['data']['shortcode_media']['video_url']
+            except (KeyError, TypeError):
+                raise Exception("Could not find video URL in Instagram response")
+
+        # For regular posts
         else:
-            raise Exception("This post doesn't contain a video")
+            L = create_instagram_session()
+            if '/p/' in url:
+                shortcode = re.search(r'/p/([^/?]+)', url).group(1)
+            else:
+                raise Exception("Invalid Instagram URL format")
+
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+            video_url = post.video_url
+            
+            if not video_url:
+                raise Exception("No video found in this Instagram post")
+
+        # Download the video
+        video_response = session.get(video_url, stream=True)
+        if video_response.status_code != 200:
+            raise Exception("Failed to download video file")
+
+        video_path = os.path.join(temp_dir, f"instagram_video_{datetime.now().timestamp()}.mp4")
         
+        with open(video_path, 'wb') as video_file:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    video_file.write(chunk)
+
+        return video_path
+
     except Exception as e:
         raise Exception(f"Instagram download failed: {str(e)}")
 
