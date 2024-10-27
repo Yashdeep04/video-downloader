@@ -4,13 +4,48 @@ from pytube import YouTube
 import os
 import tempfile
 import logging
+import time
+from functools import wraps
+import random
 
-# Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+def retry_on_error(max_retries=3, delay_seconds=2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_retries - 1:  # Last attempt
+                        raise e
+                    logger.info(f"Attempt {attempt + 1} failed, retrying after delay...")
+                    # Add random delay to avoid hitting rate limits
+                    time.sleep(delay_seconds + random.uniform(0, 2))
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@retry_on_error(max_retries=3, delay_seconds=2)
+def download_youtube_video(url, temp_dir):
+    yt = YouTube(url)
+    # Add a small delay after creating YouTube object
+    time.sleep(1)
+    
+    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+    if not stream:
+        raise Exception("No suitable video stream found")
+    
+    # Add a small delay before downloading
+    time.sleep(1)
+    
+    video_path = stream.download(output_path=temp_dir)
+    return video_path
 
 @app.route('/')
 def home():
@@ -35,26 +70,10 @@ def download_video():
         
         if 'youtube.com' in url or 'youtu.be' in url:
             try:
-                # Create a temporary directory
                 temp_dir = tempfile.mkdtemp()
                 logger.info(f"Created temp directory: {temp_dir}")
                 
-                # Download YouTube video
-                logger.info("Initializing YouTube object")
-                yt = YouTube(url)
-                
-                logger.info("Getting video streams")
-                stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-                
-                if not stream:
-                    logger.error("No suitable video stream found")
-                    return jsonify({'error': 'No suitable video stream found'}), 400
-                
-                logger.info(f"Selected stream: {stream}")
-                
-                # Download to temporary file
-                logger.info("Starting video download")
-                video_path = stream.download(output_path=temp_dir)
+                video_path = download_youtube_video(url, temp_dir)
                 logger.info(f"Video downloaded to: {video_path}")
                 
                 if not os.path.exists(video_path):
