@@ -18,12 +18,41 @@ def download_video(url, temp_dir):
         'quiet': False,
         'no_warnings': False,
         'extract_flat': False,
+        # Add user agent and other options to avoid bot detection
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.63 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Sec-Fetch-Mode': 'navigate',
+        },
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'logtostderr': False,
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0',
+        'cookiesfrombrowser': ('chrome',),  # This will use cookies from Chrome
+        'cookiefile': 'cookies.txt'  # Save cookies to file
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             logger.info("Starting download with yt-dlp")
-            info = ydl.extract_info(url, download=True)
+            # First get video info without downloading
+            info = ydl.extract_info(url, download=False)
+            # Get best mp4 format
+            formats = [f for f in info['formats'] if f['ext'] == 'mp4']
+            if not formats:
+                raise Exception("No MP4 format available")
+            
+            best_format = max(formats, key=lambda x: x.get('filesize', 0))
+            
+            # Update format and download
+            ydl_opts['format'] = best_format['format_id']
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                info = ydl2.extract_info(url, download=True)
+            
             video_path = os.path.join(temp_dir, f"{info['title']}.mp4")
             logger.info(f"Download completed: {video_path}")
             return video_path
@@ -76,8 +105,11 @@ def download_video_route():
             return response
             
         except Exception as e:
-            logger.error(f"Error in video download: {str(e)}")
-            return jsonify({'error': f'Download failed: {str(e)}'}), 500
+            error_message = str(e)
+            if "Sign in to confirm you're not a bot" in error_message:
+                return jsonify({'error': 'Currently YouTube is requiring authentication for this video. Please try a different video or try again later.'}), 403
+            logger.error(f"Error in video download: {error_message}")
+            return jsonify({'error': f'Download failed: {error_message}'}), 500
             
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
