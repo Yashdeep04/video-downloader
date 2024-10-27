@@ -1,10 +1,10 @@
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
-from pytube import YouTube
 import instaloader
 import os
 import tempfile
-from io import BytesIO
+from pytube import YouTube
+import re
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -42,17 +42,13 @@ def download_video():
 
 def download_from_youtube(url):
     try:
-        # Create a temporary directory
         temp_dir = tempfile.mkdtemp()
-        
-        # Download YouTube video
         yt = YouTube(url)
         stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
         
         if not stream:
             raise Exception("No suitable video stream found")
             
-        # Download to temporary file
         video_path = stream.download(output_path=temp_dir)
         return video_path
         
@@ -61,26 +57,33 @@ def download_from_youtube(url):
 
 def download_from_instagram(url):
     try:
-        # Create Instagram loader instance
         L = instaloader.Instaloader()
         
-        # Extract post shortcode from URL
-        shortcode = url.split("/p/")[1].split("/")[0]
+        # Handle both regular posts and reels
+        if '/reel/' in url:
+            # Extract the shortcode from reel URL
+            shortcode = re.search(r'/reel/([^/?]+)', url).group(1)
+        else:
+            # Extract shortcode from regular post URL
+            shortcode = re.search(r'/p/([^/?]+)', url).group(1)
         
-        # Create temporary directory
         temp_dir = tempfile.mkdtemp()
-        temp_path = os.path.join(temp_dir, f"{shortcode}.mp4")
         
-        # Download post
+        # Download the post or reel
         post = instaloader.Post.from_shortcode(L.context, shortcode)
-        L.download_post(post, target=temp_dir)
         
-        # Find and return the video file
-        for file in os.listdir(temp_dir):
-            if file.endswith('.mp4'):
-                return os.path.join(temp_dir, file)
-        
-        raise Exception("No video found in Instagram post")
+        if hasattr(post, 'video_url'):
+            # For video posts and reels
+            import requests
+            video_response = requests.get(post.video_url)
+            video_path = os.path.join(temp_dir, f"{shortcode}.mp4")
+            
+            with open(video_path, 'wb') as f:
+                f.write(video_response.content)
+            
+            return video_path
+        else:
+            raise Exception("This post doesn't contain a video")
         
     except Exception as e:
         raise Exception(f"Instagram download failed: {str(e)}")
